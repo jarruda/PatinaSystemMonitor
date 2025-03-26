@@ -1,5 +1,5 @@
 [package]
-name = "patina_system_monitor"
+name = "patina-system-monitor"
 version = "0.1.0"
 authors = ["Justin Arruda <justin@justinarruda.com>"]
 edition = "2021"
@@ -20,6 +20,9 @@ eframe = { version = "0.30", default-features = false, features = [
     "wayland",       # To support Linux (and CI)
 ] }
 log = "0.4"
+egui_plot = "0.30"
+influxdb-line-protocol = "2.0.0"
+egui_extras = "0.30"
 
 # You only need serde if you want app persistence:
 serde = { version = "1", features = ["derive"] }
