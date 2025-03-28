@@ -1,4 +1,5 @@
-use egui::{Color32, Context};
+use crate::{Card, GraphCard};
+use egui::{Color32, Context, Resize, Vec2};
 use egui_extras::{Column, TableBuilder};
 use egui_plot::{Line, Plot, PlotBounds, PlotPoints};
 use influxdb_line_protocol::{parse_lines, FieldValue, ParsedLine};
@@ -150,6 +151,9 @@ pub struct PatinaSystemMonitor {
     listen_thread_tx: Sender<()>,
 
     #[serde(skip)]
+    cards: Vec<Box<dyn Card>>,
+
+    #[serde(skip)]
     time_series: TimeSeries<OwnedParsedLine>,
 }
 
@@ -158,6 +162,7 @@ impl Default for PatinaSystemMonitor {
         Self {
             metrics_rx: mpsc::channel().1,
             listen_thread_tx: mpsc::channel().0,
+            cards: Vec::new(),
             time_series: TimeSeries::new(),
         }
     }
@@ -255,40 +260,40 @@ impl PatinaSystemMonitor {
                 });
         });
     }
-
-    fn simple_plot(&self, ui: &mut egui::Ui) {
-        let now_unix = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-        let plot = Plot::new("cpu_graph").height(300.0);
-
-        plot.show(ui, |plot_ui| {
-            plot_ui.set_plot_bounds(PlotBounds::from_min_max(
-                [-WINDOW_LENGTH.as_secs_f64(), 0.0],
-                [-1.1, 100.0],
-            ));
-
-            let plot_points = self
-                .time_series
-                .data
-                .iter()
-                .filter(|d| d.data.measurement == "cpu")
-                .filter(|d| {
-                    d.data
-                        .tags
-                        .iter()
-                        .any(|(k, v)| k == "cpu" && v == "cpu-total")
-                })
-                .map(|d| {
-                    [
-                        d.data.offset_timestamp_secs_f64(now_unix),
-                        100.0 - d.data.get_field_as_f64("usage_idle", 0.0),
-                    ]
-                })
-                .collect();
-
-            plot_ui.line(Line::new(PlotPoints::new(plot_points)).color(Color32::RED));
-        });
-    }
 }
+
+fn simple_plot(ui: &mut egui::Ui, time_series: &TimeSeries<OwnedParsedLine>) {
+    let now_unix = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+    let plot = Plot::new("cpu_graph").height(300.0);
+
+    plot.show(ui, |plot_ui| {
+        plot_ui.set_plot_bounds(PlotBounds::from_min_max(
+            [-WINDOW_LENGTH.as_secs_f64(), 0.0],
+            [-1.1, 100.0],
+        ));
+
+        let plot_points = time_series
+            .data
+            .iter()
+            .filter(|d| d.data.measurement == "cpu")
+            .filter(|d| {
+                d.data
+                    .tags
+                    .iter()
+                    .any(|(k, v)| k == "cpu" && v == "cpu-total")
+            })
+            .map(|d| {
+                [
+                    d.data.offset_timestamp_secs_f64(now_unix),
+                    100.0 - d.data.get_field_as_f64("usage_idle", 0.0),
+                ]
+            })
+            .collect();
+
+        plot_ui.line(Line::new(PlotPoints::new(plot_points)).color(Color32::RED));
+    });
+}
+
 
 impl eframe::App for PatinaSystemMonitor {
     /// Called each time the UI needs repainting, which may be many times per second.
@@ -304,16 +309,22 @@ impl eframe::App for PatinaSystemMonitor {
             // The top panel is often a good place for a menu bar:
 
             egui::menu::bar(ui, |ui| {
-                // NOTE: no File->Quit on web pages!
-                let is_web = cfg!(target_arch = "wasm32");
-                if !is_web {
-                    ui.menu_button("File", |ui| {
+                ui.menu_button("File", |ui| {
+                    ui.menu_button("New Card", |ui| {
+                        if ui.button("Graph").clicked() {
+                            self.cards.push(Box::new(GraphCard::default()));
+                            ui.close_menu();
+                        }
+                    });
+
+                    // NOTE: no File->Quit on web pages!
+                    let is_web = cfg!(target_arch = "wasm32");
+                    if !is_web {
                         if ui.button("Quit").clicked() {
                             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                         }
-                    });
-                    ui.add_space(16.0);
-                }
+                    }
+                });
 
                 egui::widgets::global_theme_preference_buttons(ui);
             });
@@ -321,9 +332,21 @@ impl eframe::App for PatinaSystemMonitor {
 
         egui::CentralPanel::default().show(ctx, |ui| {
             // The central panel the region left after adding TopPanel's and SidePanel's
-            ui.heading("CPU");
 
-            self.simple_plot(ui);
+            for card in &mut self.cards {
+                let card_frame = egui::Frame::none()
+                    .stroke(egui::Stroke::new(3.0, egui::Color32::GRAY))
+                    .rounding(2.0);
+
+                card_frame.show(ui, |ui| {
+                    Resize::default()
+                        .default_size(Vec2::new(100.0, 200.0))
+                        .show(ui, |ui| {
+                            card.ui(ui);
+                            simple_plot(ui, &self.time_series);
+                        });
+                });
+            }
 
             ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
                 powered_by_egui_and_eframe(ui);
